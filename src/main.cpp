@@ -14,10 +14,13 @@ https://github.com/matthijskooijman/arduino-lmic/blob/master/examples/ttn-abp/tt
 #include "LowPower.h"
 
 
-#include <Credentials.h> // TODO
+#include <Credentials.h>
 
 #define DEBUG // toggle serial output
 
+#define SOIL_MOISTURE_SENSOR_PIN_1 A6
+#define SOIL_MOISTURE_SENSOR_PIN_2 A7
+#define SWITCH_PIN 9
 
 #ifdef DEBUG
   #define log(x) Serial.print(x);
@@ -35,10 +38,10 @@ void os_getDevKey (u1_t* buf) { }
 
 static osjob_t sendjob;
 
-const unsigned TX_INTERVAL = 900; // in seconds
+const unsigned TX_INTERVAL = 60; // in seconds
 const int SLEEP_CYCLES = (int) (TX_INTERVAL / 8);
 
-// Pin mapping
+// Pin mapping 
 const lmic_pinmap lmic_pins = {
         .nss = 10, // ulm node 10
         .rxtx = LMIC_UNUSED_PIN,
@@ -69,11 +72,14 @@ void do_send(osjob_t* j){
     if (LMIC.opmode & OP_TXRXPEND) {
       logln(F("OP_TXRXPEND, not sending"));
     } else {
-        // temp -> 2 byte
-        // pressure -> 2 byte
-        // humidity -> 2 byte
-        // sum -> 6 byte
-        byte payload[6];
+        // temp                     ->  2 byte
+        // pressure                 ->  2 byte
+        // humidity                 ->  2 byte
+        // soil moisture sensor 1   ->  2 byte
+        // soil moisture sensor 2   ->  2 byte
+        // =====================================
+        // sum                      -> 10 byte
+        byte payload[10];
 
         // Only needed in forced mode. Force update of BME values
         bme.takeForcedMeasurement();
@@ -97,6 +103,34 @@ void do_send(osjob_t* j){
         payload[4] = highByte(humidity);
         payload[5] = lowByte(humidity);
 
+        // switch on soil moisture pin and wait 3s to calibrate sensors
+        digitalWrite(SWITCH_PIN, HIGH);
+        delay(3000);
+
+            // read sensors
+        int soilMoisture1 = analogRead(SOIL_MOISTURE_SENSOR_PIN_1);
+        delay(100);
+        soilMoisture1 = analogRead(SOIL_MOISTURE_SENSOR_PIN_1);
+
+        payload[6] = highByte(soilMoisture1);
+        payload[7] = lowByte(soilMoisture1);
+
+        int soilMoisture2 = analogRead(SOIL_MOISTURE_SENSOR_PIN_2);
+        delay(100);
+        soilMoisture2 = analogRead(SOIL_MOISTURE_SENSOR_PIN_2);
+        payload[8] = highByte(soilMoisture2);
+        payload[9] = lowByte(soilMoisture2);
+
+        log("Sensor1: ");
+        logln(soilMoisture1);
+        log("Sensor2: ");
+        logln(soilMoisture2);
+        logln();
+        
+        
+
+        // switch of sensors
+        digitalWrite(SWITCH_PIN, LOW);
 
         LMIC_setTxData2(1, (uint8_t*)payload, sizeof(payload), 0);
 
@@ -211,6 +245,14 @@ void setup() {
                     Adafruit_BME280::SAMPLING_X1, // pressure
                     Adafruit_BME280::SAMPLING_X1, // humidity
                     Adafruit_BME280::FILTER_OFF   );
+
+    // Set sensor switch port to switch on/off soil moisture sensors
+    pinMode(SWITCH_PIN, OUTPUT);
+    digitalWrite(SWITCH_PIN, LOW);
+
+    pinMode(SOIL_MOISTURE_SENSOR_PIN_1, INPUT);
+    pinMode(SOIL_MOISTURE_SENSOR_PIN_2, INPUT);
+
 
     // LMIC init
     os_init();
