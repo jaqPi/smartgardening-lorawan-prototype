@@ -5,18 +5,25 @@ Copyright (c) 2015 Thomas Telkamp and Matthijs Kooijman
 https://github.com/matthijskooijman/arduino-lmic/blob/master/examples/ttn-abp/ttn-abp.ino
 */
 
+#define DEBUG // toggle serial output
+#define BME280 // toggle BME280 measurement
+
 #include <lmic.h>
 #include <hal/hal.h>
 #include <Wire.h>
 #include <SPI.h>
-#include <Adafruit_Sensor.h>
-#include <Adafruit_BME280.h>
 #include "LowPower.h"
 
 
+#ifdef BME280
+    #include <Adafruit_Sensor.h>
+    #include <Adafruit_BME280.h>
+    Adafruit_BME280 bme; // I2C, depending on your BME, you have to use address 0x77 (default) or 0x76, see below
+#endif
+
 #include <Credentials.h>
 
-#define DEBUG // toggle serial output
+
 
 #define SOIL_MOISTURE_SENSOR_PIN_1 A6
 #define SOIL_MOISTURE_SENSOR_PIN_2 A7
@@ -30,7 +37,6 @@ https://github.com/matthijskooijman/arduino-lmic/blob/master/examples/ttn-abp/tt
   #define logln(x)
 #endif
 
-Adafruit_BME280 bme; // I2C, depending on your BME, you have to use address 0x77 (default) or 0x76, see below
 
 void os_getArtEui (u1_t* buf) { }
 void os_getDevEui (u1_t* buf) { }
@@ -38,7 +44,7 @@ void os_getDevKey (u1_t* buf) { }
 
 static osjob_t sendjob;
 
-const unsigned TX_INTERVAL = 60; // in seconds
+const unsigned TX_INTERVAL = 20 * 60; // in seconds
 const int SLEEP_CYCLES = (int) (TX_INTERVAL / 8);
 
 // Pin mapping 
@@ -50,20 +56,22 @@ const lmic_pinmap lmic_pins = {
 };
 
 void printValues() {
-    log("Temperature = ");
-    log(bme.readTemperature());
-    logln(" *C");
+    #ifdef BME280
+        log("Temperature = ");
+        log(bme.readTemperature());
+        logln(" *C");
 
-    log("Pressure = ");
+        log("Pressure = ");
 
-    log(bme.readPressure());
-    logln(" hPa");
+        log(bme.readPressure());
+        logln(" hPa");
 
-    log("Humidity = ");
-    log(bme.readHumidity());
-    logln(" %");
+        log("Humidity = ");
+        log(bme.readHumidity());
+        logln(" %");
 
-    logln();
+        logln();
+    #endif
 }
 
 
@@ -72,65 +80,70 @@ void do_send(osjob_t* j){
     if (LMIC.opmode & OP_TXRXPEND) {
       logln(F("OP_TXRXPEND, not sending"));
     } else {
+        // soil moisture sensor 1   ->  2 byte
+        // soil moisture sensor 2   ->  2 byte
         // temp                     ->  2 byte
         // pressure                 ->  2 byte
         // humidity                 ->  2 byte
-        // soil moisture sensor 1   ->  2 byte
-        // soil moisture sensor 2   ->  2 byte
         // =====================================
         // sum                      -> 10 byte
-        byte payload[10];
-
-        // Only needed in forced mode. Force update of BME values
-        bme.takeForcedMeasurement();
-
-        #ifdef DEBUG
-          printValues();
+        #ifdef BME280
+            byte payload[10];
+        #else
+            byte payload[4];
         #endif
-
-        // temp
-        int temp = round(bme.readTemperature() * 100);
-        payload[0] = highByte(temp);
-        payload[1] = lowByte(temp);
-
-        // pressure
-        int pressure = round(bme.readPressure()/100);
-        payload[2] = highByte(pressure);
-        payload[3] = lowByte(pressure);
-
-        // humidity
-        int humidity = round(bme.readHumidity() * 100);
-        payload[4] = highByte(humidity);
-        payload[5] = lowByte(humidity);
 
         // switch on soil moisture pin and wait 3s to calibrate sensors
         digitalWrite(SWITCH_PIN, HIGH);
         delay(3000);
 
-            // read sensors
+        // read sensors
         int soilMoisture1 = analogRead(SOIL_MOISTURE_SENSOR_PIN_1);
         delay(100);
         soilMoisture1 = analogRead(SOIL_MOISTURE_SENSOR_PIN_1);
 
-        payload[6] = highByte(soilMoisture1);
-        payload[7] = lowByte(soilMoisture1);
+        payload[0] = highByte(soilMoisture1);
+        payload[1] = lowByte(soilMoisture1);
 
         int soilMoisture2 = analogRead(SOIL_MOISTURE_SENSOR_PIN_2);
         delay(100);
         soilMoisture2 = analogRead(SOIL_MOISTURE_SENSOR_PIN_2);
-        payload[8] = highByte(soilMoisture2);
-        payload[9] = lowByte(soilMoisture2);
+        payload[2] = highByte(soilMoisture2);
+        payload[3] = lowByte(soilMoisture2);
 
         log("Sensor1: ");
         logln(soilMoisture1);
         log("Sensor2: ");
         logln(soilMoisture2);
         logln();
-        
-        
 
         // switch of sensors
         digitalWrite(SWITCH_PIN, LOW);
+
+
+        #ifdef BME280
+            // Only needed in forced mode. Force update of BME values
+            bme.takeForcedMeasurement();
+
+            #ifdef DEBUG
+                printValues();
+            #endif
+
+            // temp
+            int temp = round(bme.readTemperature() * 100);
+            payload[4] = highByte(temp);
+            payload[5] = lowByte(temp);
+
+            // pressure
+            int pressure = round(bme.readPressure()/100);
+            payload[6] = highByte(pressure);
+            payload[7] = lowByte(pressure);
+
+            // humidity
+            int humidity = round(bme.readHumidity() * 100);
+            payload[8] = highByte(humidity);
+            payload[9] = lowByte(humidity);
+        #endif 
 
         LMIC_setTxData2(1, (uint8_t*)payload, sizeof(payload), 0);
 
@@ -228,23 +241,26 @@ void setup() {
     #endif
     logln(F("Starting"));
 
+    #ifdef BME280
+        // Setup BME280, use address 0x77 (default) or 0x76
+        if (!bme.begin(0x76)) {
+        logln("Could not find a valid BME280 sensor, check wiring!");
+        while (1);
+        }
+        
 
-    // Setup BME280, use address 0x77 (default) or 0x76
-    if (!bme.begin(0x76)) {
-      logln("Could not find a valid BME280 sensor, check wiring!");
-      while (1);
-    }
+        // Set BME in force mode to reduce power consumption
+        // force mode = measure, store results, and go into sleep mode
+        // until next measurement, see
+        // - http://tinkerman.cat/low-power-weather-station-bme280-moteino/
+        // - https://github.com/adafruit/Adafruit_BME280_Library/blob/master/examples/advancedsettings/advancedsettings.ino
+        bme.setSampling(Adafruit_BME280::MODE_FORCED,
+                        Adafruit_BME280::SAMPLING_X1, // temperature
+                        Adafruit_BME280::SAMPLING_X1, // pressure
+                        Adafruit_BME280::SAMPLING_X1, // humidity
+                        Adafruit_BME280::FILTER_OFF   );
+    #endif
 
-    // Set BME in force mode to reduce power consumption
-    // force mode = measure, store results, and go into sleep mode
-    // until next measurement, see
-    // - http://tinkerman.cat/low-power-weather-station-bme280-moteino/
-    // - https://github.com/adafruit/Adafruit_BME280_Library/blob/master/examples/advancedsettings/advancedsettings.ino
-    bme.setSampling(Adafruit_BME280::MODE_FORCED,
-                    Adafruit_BME280::SAMPLING_X1, // temperature
-                    Adafruit_BME280::SAMPLING_X1, // pressure
-                    Adafruit_BME280::SAMPLING_X1, // humidity
-                    Adafruit_BME280::FILTER_OFF   );
 
     // Set sensor switch port to switch on/off soil moisture sensors
     pinMode(SWITCH_PIN, OUTPUT);
