@@ -5,8 +5,6 @@ Copyright (c) 2015 Thomas Telkamp and Matthijs Kooijman
 https://github.com/matthijskooijman/arduino-lmic/blob/master/examples/ttn-abp/ttn-abp.ino
 */
 
-#define DEBUG // toggle serial output
-#define BME280 // toggle BME280 measurement
 
 #include <lmic.h>
 #include <hal/hal.h>
@@ -30,11 +28,11 @@ https://github.com/matthijskooijman/arduino-lmic/blob/master/examples/ttn-abp/tt
 #define SWITCH_PIN 9
 
 #ifdef DEBUG
-  #define log(x) Serial.print(x);
-  #define logln(x) Serial.println(x);
+  #define print(x) Serial.print(x);
+  #define println(x) Serial.println(x);
 #else
-  #define log(x)
-  #define logln(x)
+  #define print(x)
+  #define println(x)
 #endif
 
 
@@ -57,28 +55,27 @@ const lmic_pinmap lmic_pins = {
 
 void printValues() {
     #ifdef BME280
-        log("Temperature = ");
-        log(bme.readTemperature());
-        logln(" *C");
+        print("Temperature = ");
+        print(bme.readTemperature());
+        println(" *C");
 
-        log("Pressure = ");
+        print("Pressure = ");
 
-        log(bme.readPressure());
-        logln(" hPa");
+        print(bme.readPressure());
+        println(" hPa");
 
-        log("Humidity = ");
-        log(bme.readHumidity());
-        logln(" %");
+        print("Humidity = ");
+        print(bme.readHumidity());
+        println(" %");
 
-        logln();
+        println();
     #endif
 }
-
 
 void do_send(osjob_t* j){
     // Check if there is not a current TX/RX job running
     if (LMIC.opmode & OP_TXRXPEND) {
-      logln(F("OP_TXRXPEND, not sending"));
+      println(F("OP_TXRXPEND, not sending"));
     } else {
         // soil moisture sensor 1   ->  2 byte
         // soil moisture sensor 2   ->  2 byte
@@ -111,11 +108,11 @@ void do_send(osjob_t* j){
         payload[2] = highByte(soilMoisture2);
         payload[3] = lowByte(soilMoisture2);
 
-        log("Sensor1: ");
-        logln(soilMoisture1);
-        log("Sensor2: ");
-        logln(soilMoisture2);
-        logln();
+        print("Sensor1: ");
+        println(soilMoisture1);
+        print("Sensor2: ");
+        println(soilMoisture2);
+        println();
 
         // switch of sensors
         digitalWrite(SWITCH_PIN, LOW);
@@ -147,50 +144,73 @@ void do_send(osjob_t* j){
 
         LMIC_setTxData2(1, (uint8_t*)payload, sizeof(payload), 0);
 
-        logln(F("Packet queued"));
+        println(F("Packet queued"));
     }
 }
 
+/**
+ * Adjusts the Arduino's internal timer by the given time.
+ * Code adopted from JackGruber
+ * https://github.com/JackGruber/Arduino-Pro-Mini-LoRa-Sensor-Node/blob/master/src/powerdown.cpp
+ */
+void updateMicros(int seconds) {
+    extern volatile unsigned long timer0_overflow_count;
+    cli();
+    // LMIC uses micros() to keep track of the duty cycle, so
+    // hack timer0_overflow for a rude adjustment:  
+    timer0_overflow_count+= seconds * 64 * clockCyclesPerMicrosecond();
+    sei();
+    os_getTime();
+}
+
 void onEvent (ev_t ev) {
-    log(os_getTime());
-    log(": ");
+    print(os_getTime());
+    print(": ");
     switch(ev) {
         case EV_SCAN_TIMEOUT:
-            logln(F("EV_SCAN_TIMEOUT"));
+            println(F("EV_SCAN_TIMEOUT"));
             break;
         case EV_BEACON_FOUND:
-            logln(F("EV_BEACON_FOUND"));
+            println(F("EV_BEACON_FOUND"));
             break;
         case EV_BEACON_MISSED:
-            logln(F("EV_BEACON_MISSED"));
+            println(F("EV_BEACON_MISSED"));
             break;
         case EV_BEACON_TRACKED:
-            logln(F("EV_BEACON_TRACKED"));
+            println(F("EV_BEACON_TRACKED"));
             break;
         case EV_JOINING:
-            logln(F("EV_JOINING"));
+            println(F("EV_JOINING"));
             break;
         case EV_JOINED:
-            logln(F("EV_JOINED"));
+            println(F("EV_JOINED"));
             break;
-        case EV_RFU1:
-            logln(F("EV_RFU1"));
-            break;
+        /*
+        || This event is defined but not used in the code. No
+        || point in wasting codespace on it.
+        ||
+        || case EV_RFU1:
+        ||     Serial.println(F("EV_RFU1"));
+        ||     break;
+        */
         case EV_JOIN_FAILED:
-            logln(F("EV_JOIN_FAILED"));
+            println(F("EV_JOIN_FAILED"));
             break;
         case EV_REJOIN_FAILED:
-            logln(F("EV_REJOIN_FAILED"));
+            println(F("EV_REJOIN_FAILED"));
             break;
         case EV_TXCOMPLETE:
-            logln(F("EV_TXCOMPLETE (includes waiting for RX windows)"));
+            println(F("EV_TXCOMPLETE (includes waiting for RX windows)"));
             if (LMIC.txrxFlags & TXRX_ACK)
-                logln(F("Received ack"));
+              println(F("Received ack"));
             if (LMIC.dataLen) {
-                logln(F("Received "));
-                logln(LMIC.dataLen);
-                logln(F(" bytes of payload"));
+              println(F("Received "));
+              println(LMIC.dataLen);
+              println(F(" bytes of payload"));
             }
+            // Schedule next transmission
+            os_setTimedCallback(&sendjob, os_getTime()+sec2osticks(TX_INTERVAL), do_send);
+
 
             // Now preparing to go into sleep mode. The LMIC library already
             // powers down the RFM95, see
@@ -207,44 +227,68 @@ void onEvent (ev_t ev) {
             // Going into sleep for more than 8 s – any better idea?
             for(int i = 0; i < SLEEP_CYCLES; i++) {
               LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
+              updateMicros(8);
             }
 
             // Schedule next transmission to be immediately after this
             os_setTimedCallback(&sendjob, os_getTime() + sec2osticks(1), do_send);
 
+
             break;
         case EV_LOST_TSYNC:
-            logln(F("EV_LOST_TSYNC"));
+            println(F("EV_LOST_TSYNC"));
             break;
         case EV_RESET:
-            logln(F("EV_RESET"));
+            println(F("EV_RESET"));
             break;
         case EV_RXCOMPLETE:
             // data received in ping slot
-            logln(F("EV_RXCOMPLETE"));
+            println(F("EV_RXCOMPLETE"));
             break;
         case EV_LINK_DEAD:
-            logln(F("EV_LINK_DEAD"));
+            println(F("EV_LINK_DEAD"));
             break;
         case EV_LINK_ALIVE:
-            logln(F("EV_LINK_ALIVE"));
+            println(F("EV_LINK_ALIVE"));
+            break;
+        /*
+        || This event is defined but not used in the code. No
+        || point in wasting codespace on it.
+        ||
+        || case EV_SCAN_FOUND:
+        ||    Serial.println(F("EV_SCAN_FOUND"));
+        ||    break;
+        */
+        case EV_TXSTART:
+            println(F("EV_TXSTART"));
+            break;
+        case EV_TXCANCELED:
+            println(F("EV_TXCANCELED"));
+            break;
+        case EV_RXSTART:
+            /* do not print anything -- it wrecks timing */
+            break;
+        case EV_JOIN_TXCOMPLETE:
+            println(F("EV_JOIN_TXCOMPLETE: no JoinAccept"));
             break;
         default:
-            logln(F("Unknown event"));
+            print(F("Unknown event: "));
+            println((unsigned) ev);
             break;
     }
 }
+
 
 void setup() {
     #ifdef DEBUG
       Serial.begin(9600);
     #endif
-    logln(F("Starting"));
+    println(F("Starting"));
 
     #ifdef BME280
         // Setup BME280, use address 0x77 (default) or 0x76
         if (!bme.begin(0x76)) {
-        logln("Could not find a valid BME280 sensor, check wiring!");
+        println("Could not find a valid BME280 sensor, check wiring!");
         while (1);
         }
         
@@ -269,24 +313,37 @@ void setup() {
     pinMode(SOIL_MOISTURE_SENSOR_PIN_1, INPUT);
     pinMode(SOIL_MOISTURE_SENSOR_PIN_2, INPUT);
 
-
     // LMIC init
     os_init();
     // Reset the MAC state. Session and pending data transfers will be discarded.
     LMIC_reset();
 
-#ifdef PROGMEM
+    // Set static session parameters. Instead of dynamically establishing a session
+    // by joining the network, precomputed session parameters are be provided.
+    #ifdef PROGMEM
+    // On AVR, these values are stored in flash and only copied to RAM
+    // once. Copy them to a temporary buffer here, LMIC_setSession will
+    // copy them into a buffer of its own again.
     uint8_t appskey[sizeof(APPSKEY)];
     uint8_t nwkskey[sizeof(NWKSKEY)];
     memcpy_P(appskey, APPSKEY, sizeof(APPSKEY));
     memcpy_P(nwkskey, NWKSKEY, sizeof(NWKSKEY));
-    LMIC_setSession (0x1, DEVADDR, nwkskey, appskey);
-#else
+    LMIC_setSession (0x13, DEVADDR, nwkskey, appskey);
+    #else
     // If not running an AVR with PROGMEM, just use the arrays directly
-    LMIC_setSession (0x1, DEVADDR, NWKSKEY, APPSKEY);
-#endif
+    LMIC_setSession (0x13, DEVADDR, NWKSKEY, APPSKEY);
+    #endif
 
-#if defined(CFG_eu868)
+    #if defined(CFG_eu868)
+    // Set up the channels used by the Things Network, which corresponds
+    // to the defaults of most gateways. Without this, only three base
+    // channels from the LoRaWAN specification are used, which certainly
+    // works, so it is good for debugging, but can overload those
+    // frequencies, so be sure to configure the full frequency range of
+    // your network here (unless your network autoconfigures them).
+    // Setting up channels should happen after LMIC_setSession, as that
+    // configures the minimal channel set. The LMIC doesn't let you change
+    // the three basic settings, but we show them here.
     LMIC_setupChannel(0, 868100000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
     LMIC_setupChannel(1, 868300000, DR_RANGE_MAP(DR_SF12, DR_SF7B), BAND_CENTI);      // g-band
     LMIC_setupChannel(2, 868500000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
@@ -296,9 +353,44 @@ void setup() {
     LMIC_setupChannel(6, 867700000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
     LMIC_setupChannel(7, 867900000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
     LMIC_setupChannel(8, 868800000, DR_RANGE_MAP(DR_FSK,  DR_FSK),  BAND_MILLI);      // g2-band
-#elif defined(CFG_us915)
+    // TTN defines an additional channel at 869.525Mhz using SF9 for class B
+    // devices' ping slots. LMIC does not have an easy way to define set this
+    // frequency and support for class B is spotty and untested, so this
+    // frequency is not configured here.
+    #elif defined(CFG_us915) || defined(CFG_au915)
+    // NA-US and AU channels 0-71 are configured automatically
+    // but only one group of 8 should (a subband) should be active
+    // TTN recommends the second sub band, 1 in a zero based count.
+    // https://github.com/TheThingsNetwork/gateway-conf/blob/master/US-global_conf.json
     LMIC_selectSubBand(1);
-#endif
+    #elif defined(CFG_as923)
+    // Set up the channels used in your country. Only two are defined by default,
+    // and they cannot be changed.  Use BAND_CENTI to indicate 1% duty cycle.
+    // LMIC_setupChannel(0, 923200000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);
+    // LMIC_setupChannel(1, 923400000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);
+
+    // ... extra definitions for channels 2..n here
+    #elif defined(CFG_kr920)
+    // Set up the channels used in your country. Three are defined by default,
+    // and they cannot be changed. Duty cycle doesn't matter, but is conventionally
+    // BAND_MILLI.
+    // LMIC_setupChannel(0, 922100000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_MILLI);
+    // LMIC_setupChannel(1, 922300000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_MILLI);
+    // LMIC_setupChannel(2, 922500000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_MILLI);
+
+    // ... extra definitions for channels 3..n here.
+    #elif defined(CFG_in866)
+    // Set up the channels used in your country. Three are defined by default,
+    // and they cannot be changed. Duty cycle doesn't matter, but is conventionally
+    // BAND_MILLI.
+    // LMIC_setupChannel(0, 865062500, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_MILLI);
+    // LMIC_setupChannel(1, 865402500, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_MILLI);
+    // LMIC_setupChannel(2, 865985000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_MILLI);
+
+    // ... extra definitions for channels 3..n here.
+    #else
+    # error Region not supported
+    #endif
 
     // Disable link check validation
     LMIC_setLinkCheckMode(0);
@@ -306,7 +398,7 @@ void setup() {
     // TTN uses SF9 for its RX2 window.
     LMIC.dn2Dr = DR_SF9;
 
-    // Set data rate and transmit power for uplink (note: txpow seems to be ignored by the library)
+    // Set data rate and transmit power for uplink
     LMIC_setDrTxpow(DR_SF7,14);
 
     // Start job
