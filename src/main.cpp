@@ -73,6 +73,21 @@ void printValues() {
     #endif
 }
 
+int readSensor(uint8_t pin) {
+    float measuredValue = 0.0;
+    uint8_t numberOfMeasurements = 10;
+
+    // Measure X times
+    for (uint8_t i = 0; i < numberOfMeasurements; i++) {
+        measuredValue += analogRead(pin);
+    }
+
+    // Calc mean
+    measuredValue = measuredValue/numberOfMeasurements;
+    
+    return round(measuredValue);
+}
+
 void do_send(osjob_t* j){
     // Check if there is not a current TX/RX job running
     if (LMIC.opmode & OP_TXRXPEND) {
@@ -96,16 +111,11 @@ void do_send(osjob_t* j){
         delay(3000);
 
         // read sensors
-        int soilMoisture1 = analogRead(SOIL_MOISTURE_SENSOR_PIN_1);
-        delay(100);
-        soilMoisture1 = analogRead(SOIL_MOISTURE_SENSOR_PIN_1);
-
+        int soilMoisture1 = readSensor(SOIL_MOISTURE_SENSOR_PIN_1);
         payload[0] = highByte(soilMoisture1);
         payload[1] = lowByte(soilMoisture1);
 
-        int soilMoisture2 = analogRead(SOIL_MOISTURE_SENSOR_PIN_2);
-        delay(100);
-        soilMoisture2 = analogRead(SOIL_MOISTURE_SENSOR_PIN_2);
+        int soilMoisture2 = readSensor(SOIL_MOISTURE_SENSOR_PIN_2);
         payload[2] = highByte(soilMoisture2);
         payload[3] = lowByte(soilMoisture2);
 
