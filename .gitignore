@@ -114,3 +114,4 @@ Temporary Items
 Credentials.h
 
 .vscode/*
+.pio/
