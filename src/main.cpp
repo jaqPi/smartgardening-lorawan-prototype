@@ -77,6 +77,8 @@ int readSensor(uint8_t pin) {
     float measuredValue = 0.0;
     uint8_t numberOfMeasurements = 10;
 
+    analogRead(pin); // drop first reading
+
     // Measure X times
     for (uint8_t i = 0; i < numberOfMeasurements; i++) {
         measuredValue += analogRead(pin);
@@ -112,6 +114,7 @@ void do_send(osjob_t* j){
 
         // read sensors
         int soilMoisture1 = readSensor(SOIL_MOISTURE_SENSOR_PIN_1);
+
         payload[0] = highByte(soilMoisture1);
         payload[1] = lowByte(soilMoisture1);
 
@@ -220,7 +223,7 @@ void onEvent (ev_t ev) {
               println(F(" bytes of payload"));
             }
             // Schedule next transmission
-            os_setTimedCallback(&sendjob, os_getTime()+sec2osticks(TX_INTERVAL), do_send);
+            //os_setTimedCallback(&sendjob, os_getTime()+sec2osticks(TX_INTERVAL), do_send);
 
 
             // Now preparing to go into sleep mode. The LMIC library already
@@ -237,8 +240,8 @@ void onEvent (ev_t ev) {
 
             // Going into sleep for more than 8 s – any better idea?
             for(int i = 0; i < SLEEP_CYCLES; i++) {
-              LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
-              updateMicros(8);
+                LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
+                updateMicros(8);
             }
 
             // Schedule next transmission to be immediately after this
@@ -321,8 +324,8 @@ void setup() {
     pinMode(SWITCH_PIN, OUTPUT);
     digitalWrite(SWITCH_PIN, LOW);
 
-    pinMode(SOIL_MOISTURE_SENSOR_PIN_1, INPUT);
-    pinMode(SOIL_MOISTURE_SENSOR_PIN_2, INPUT);
+    pinMode(SOIL_MOISTURE_SENSOR_PIN_1, INPUT_PULLUP);
+    pinMode(SOIL_MOISTURE_SENSOR_PIN_2, INPUT_PULLUP);
 
     // LMIC init
     os_init();
@@ -410,7 +413,7 @@ void setup() {
     LMIC.dn2Dr = DR_SF9;
 
     // Set data rate and transmit power for uplink
-    LMIC_setDrTxpow(DR_SF7,14);
+    LMIC_setDrTxpow(DR_SF12,14);
 
     // Start job
     do_send(&sendjob);
